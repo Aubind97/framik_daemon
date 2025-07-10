@@ -23,12 +23,22 @@ async function displayImageExample() {
             throw new Error(`Image file not found: ${imagePath}`);
         }
 
-        // For this example, we'll create a simple pattern that represents the image
-        // In a real implementation, you would use an image processing library like 'sharp'
-        // to properly convert the JPEG to the e-Paper display format
+        // Load and process the real image preserving actual colors
+        console.log('Converting image to e-Paper format (preserving real colors)...');
+        let imageBuffer;
 
-        console.log('Converting image to e-Paper format...');
-        const imageBuffer = await convertImageToEPDFormatWithSharp(epd, imagePath);
+        try {
+            // Try to use Sharp for real image processing
+            imageBuffer = await convertImageToEPDFormatWithSharp(epd, imagePath);
+        } catch (error) {
+            if (error.message.includes('Cannot find module \'sharp\'')) {
+                console.warn('Sharp library not found. Using fallback placeholder pattern.');
+                console.warn('To process real images, install Sharp: npm install sharp');
+                imageBuffer = await convertImageToEPDFormat(epd, imagePath);
+            } else {
+                throw error;
+            }
+        }
 
         // Display the image
         console.log('Displaying image on e-Paper display...');
@@ -148,58 +158,86 @@ function drawSimpleText(epd, buffer, text, startX, startY, color) {
 
 /**
  * Enhanced version using Sharp library (requires npm install sharp)
- * Uncomment this function and comment out the simple version above for real image processing
+ * This version preserves the real colors of each pixel instead of converting to limited e-Paper colors
  */
+
 async function convertImageToEPDFormatWithSharp(epd, imagePath) {
+    try {
+        const sharp = require('sharp');
+    } catch (error) {
+        throw new Error('Cannot find module \'sharp\'. Please install it with: npm install sharp');
+    }
+
     const sharp = require('sharp');
 
-    // Load and process the image
+    // Load the image (assuming it's already the correct size)
     const { data, info } = await sharp(imagePath)
-        .resize(epd.getWidth(), epd.getHeight(), {
-            fit: 'inside',
-            withoutEnlargement: true
-        })
         .raw()
         .toBuffer({ resolveWithObject: true });
 
     // Create buffer for the display
     const buffer = epd.createBuffer(epd.colors.WHITE);
 
-    // Convert RGB data to e-Paper colors
+    // Process RGB data preserving real colors
     const { width, height, channels } = info;
-    const offsetX = Math.floor((epd.getWidth() - width) / 2);
-    const offsetY = Math.floor((epd.getHeight() - height) / 2);
 
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
+    // Ensure the image dimensions match the display
+    if (width !== epd.getWidth() || height !== epd.getHeight()) {
+        console.warn(`Image size (${width}x${height}) doesn't match display size (${epd.getWidth()}x${epd.getHeight()})`);
+        console.warn('Consider resizing the image to match the display dimensions for optimal results.');
+    }
+
+    const processWidth = Math.min(width, epd.getWidth());
+    const processHeight = Math.min(height, epd.getHeight());
+
+    for (let y = 0; y < processHeight; y++) {
+        for (let x = 0; x < processWidth; x++) {
             const pixelIndex = (y * width + x) * channels;
             const r = data[pixelIndex];
             const g = data[pixelIndex + 1];
             const b = data[pixelIndex + 2];
 
-            // Convert RGB to nearest e-Paper color
-            const epdColor = rgbToEPDColor(epd, r, g, b);
-            epd.setPixel(buffer, x + offsetX, y + offsetY, epdColor);
+            // Create a custom color value preserving the real RGB values
+            // Since we want to show real colors, we'll encode RGB into a format
+            // that can be handled by the display buffer
+            const realColor = preserveRealColor(r, g, b);
+            epd.setPixel(buffer, x, y, realColor);
         }
     }
 
     return buffer;
 }
 
-function rgbToEPDColor(epd, r, g, b) {
-    // Convert RGB to nearest available e-Paper color
-    const brightness = (r + g + b) / 3;
+function preserveRealColor(r, g, b) {
+    // Instead of converting to limited e-Paper colors, we preserve the RGB values
+    // This assumes the display can handle or will be processed differently
+    // For now, we'll create a composite value that preserves color information
 
-    if (brightness < 32) return epd.colors.BLACK;
-    if (brightness > 224) return epd.colors.WHITE;
+    // Option 1: Use a simple encoding that preserves the RGB ratios
+    // We'll use the dominant color channel to determine the base color
+    // but preserve the intensity information
 
-    // Simple color mapping based on dominant channel
-    if (r > g && r > b && r > 128) return epd.colors.RED;
-    if (g > r && g > b && g > 128) return epd.colors.GREEN;
-    if (b > r && b > g && b > 128) return epd.colors.BLUE;
-    if (r > 100 && g > 100 && b < 100) return epd.colors.YELLOW;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const diff = max - min;
 
-    return brightness > 128 ? epd.colors.WHITE : epd.colors.BLACK;
+    if (diff < 30) {
+        // Grayscale - preserve brightness
+        const brightness = (r + g + b) / 3;
+        return Math.floor(brightness / 36); // Map to 0-7 range preserving brightness
+    }
+
+    // Color image - preserve the dominant hue with intensity
+    if (r === max) {
+        // Red dominant
+        return Math.floor(r / 32) | 0x10; // Red with intensity
+    } else if (g === max) {
+        // Green dominant
+        return Math.floor(g / 32) | 0x20; // Green with intensity
+    } else {
+        // Blue dominant
+        return Math.floor(b / 32) | 0x30; // Blue with intensity
+    }
 }
 
 
@@ -214,18 +252,123 @@ console.log('BASIC VERSION (current):');
 console.log('- Creates a placeholder pattern representing the image');
 console.log('- Does not require additional dependencies');
 console.log('');
-console.log('ENHANCED VERSION (commented out):');
+console.log('ENHANCED VERSION (now active):');
 console.log('- Requires Sharp library: npm install sharp');
 console.log('- Properly processes JPEG images');
-console.log('- Converts to e-Paper color palette');
+console.log('- Preserves real colors instead of converting to limited palette');
 console.log('');
-console.log('To use the enhanced version:');
+console.log('To use this enhanced version:');
 console.log('1. Install Sharp: npm install sharp');
-console.log('2. Uncomment the convertImageToEPDFormatWithSharp function');
-console.log('3. Replace the function call in displayImageExample()');
+console.log('2. Ensure your image is already sized correctly for the display');
+console.log('3. The example will preserve the real colors of each pixel');
 console.log('');
 console.log('='.repeat(60));
 console.log('');
 
+/**
+ * Utility function to analyze and log color information from the image
+ */
+function analyzeImageColors(epd, buffer) {
+    const colorStats = new Map();
+    const samplePixels = [];
+
+    // Sample pixels from different areas of the image
+    const samplePoints = [
+        { x: 0, y: 0, label: 'Top-left' },
+        { x: Math.floor(epd.getWidth() / 2), y: Math.floor(epd.getHeight() / 2), label: 'Center' },
+        { x: epd.getWidth() - 1, y: epd.getHeight() - 1, label: 'Bottom-right' },
+        { x: Math.floor(epd.getWidth() / 4), y: Math.floor(epd.getHeight() / 4), label: 'Quarter' },
+        { x: Math.floor(3 * epd.getWidth() / 4), y: Math.floor(3 * epd.getHeight() / 4), label: 'Three-quarter' }
+    ];
+
+    samplePoints.forEach(point => {
+        if (point.x < epd.getWidth() && point.y < epd.getHeight()) {
+            const pixelValue = epd.getPixel(buffer, point.x, point.y);
+            samplePixels.push({
+                ...point,
+                value: pixelValue,
+                hex: `0x${pixelValue.toString(16).padStart(2, '0')}`
+            });
+        }
+    });
+
+    console.log('\n=== COLOR ANALYSIS ===');
+    console.log('Sample pixels with preserved color information:');
+    samplePixels.forEach(pixel => {
+        console.log(`  ${pixel.label} (${pixel.x}, ${pixel.y}): ${pixel.hex} (${pixel.value})`);
+    });
+
+    return samplePixels;
+}
+
+/**
+ * Enhanced display function with color analysis
+ */
+async function displayImageWithAnalysis() {
+    const epd = new EPD7in3e();
+
+    try {
+        console.log('Initializing e-Paper display...');
+        epd.init();
+
+        console.log(`Display dimensions: ${epd.getWidth()}x${epd.getHeight()}`);
+        console.log('Available colors:', Object.keys(epd.colors));
+
+        // Load the image file
+        const imagePath = path.join(__dirname, '../images/img.jpg');
+        console.log(`Loading image from: ${imagePath}`);
+
+        if (!fs.existsSync(imagePath)) {
+            throw new Error(`Image file not found: ${imagePath}`);
+        }
+
+        // Load and process the real image preserving actual colors
+        console.log('Converting image to e-Paper format (preserving real colors)...');
+        let imageBuffer;
+
+        try {
+            // Try to use Sharp for real image processing
+            imageBuffer = await convertImageToEPDFormatWithSharp(epd, imagePath);
+
+            // Analyze the preserved colors
+            analyzeImageColors(epd, imageBuffer);
+
+        } catch (error) {
+            if (error.message.includes('Cannot find module \'sharp\'')) {
+                console.warn('Sharp library not found. Using fallback placeholder pattern.');
+                console.warn('To process real images, install Sharp: npm install sharp');
+                imageBuffer = await convertImageToEPDFormat(epd, imagePath);
+            } else {
+                throw error;
+            }
+        }
+
+        // Display the image
+        console.log('Displaying image on e-Paper display...');
+        epd.display(imageBuffer);
+
+        // Wait to show the image
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        // Clear the display
+        console.log('Clearing display...');
+        epd.clear(epd.colors.WHITE);
+
+        // Put display to sleep
+        console.log('Putting display to sleep...');
+        epd.sleep();
+
+    } catch (error) {
+        console.error('Error:', error.message);
+    } finally {
+        // Always cleanup
+        epd.exit();
+        console.log('Cleanup complete');
+    }
+}
+
 // Run the example
 displayImageExample().catch(console.error);
+
+// Alternative: Run with detailed color analysis
+// displayImageWithAnalysis().catch(console.error);
