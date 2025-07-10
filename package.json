@@ -20,7 +20,8 @@
   "author": "Generated from Waveshare SDK",
   "license": "MIT",
   "dependencies": {
-    "node-addon-api": "^7.0.0"
+    "node-addon-api": "^7.0.0",
+    "sharp": "^0.34.3"
   },
   "devDependencies": {
     "node-gyp": "^10.0.0"
