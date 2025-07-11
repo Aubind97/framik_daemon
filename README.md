@@ -9,7 +9,9 @@ A standalone Node.js addon for controlling the Waveshare 7.3inch e-Paper display
 - **Easy to use**: Simple JavaScript API with TypeScript support
 - **Complete**: Includes all EPD_7in3e functions from the original SDK
 - **Buffer manipulation**: Helper functions for creating and manipulating image buffers
-- **Color support**: Full 7-color support (Black, White, Yellow, Red, Blue, Green)
+- **BMP-Compatible Color Mapping**: Uses the same logic as GUI.c for accurate color reproduction
+- **Full Color Support**: RGB colors mapped to closest available display colors (no more Red/Green/Blue only)
+- **Color support**: Full 7-color support (Black, White, Yellow, Red, Blue, Green) + intelligent RGB mapping
 
 ## Hardware Requirements
 
@@ -110,10 +112,15 @@ function createCustomImage() {
         // Create a blank white buffer
         const imageBuffer = epd.createBuffer(epd.colors.WHITE);
         
-        // Draw some pixels
+        // Draw some pixels with palette colors
         epd.setPixel(imageBuffer, 100, 100, epd.colors.BLACK);
         epd.setPixel(imageBuffer, 101, 100, epd.colors.RED);
         epd.setPixel(imageBuffer, 102, 100, epd.colors.BLUE);
+        
+        // NEW: Draw pixels with actual RGB colors (BMP-compatible color mapping)
+        epd.setPixelRGB(imageBuffer, 103, 100, 255, 165, 0);  // Orange → Yellow (closest match)
+        epd.setPixelRGB(imageBuffer, 104, 100, 128, 0, 128);  // Purple → Blue (closest match)
+        epd.setPixelRGB(imageBuffer, 105, 100, 0, 255, 255);  // Cyan → Yellow (closest match)
         
         // Display the custom image
         epd.display(imageBuffer);
@@ -132,6 +139,42 @@ function createCustomImage() {
 }
 
 createCustomImage();
+```
+
+### Full Color Image Processing
+
+```javascript
+const EPD7in3e = require('./index.js');
+const sharp = require('sharp'); // npm install sharp
+
+async function displayFullColorImage() {
+    const epd = new EPD7in3e();
+    
+    try {
+        epd.init();
+        
+        // Process image preserving all RGB colors
+        const { data, info } = await sharp('image.jpg')
+            .resize(epd.getWidth(), epd.getHeight())
+            .raw()
+            .toBuffer({ resolveWithObject: true });
+        
+        // Create buffer with BMP-compatible color mapping
+        const imageBuffer = epd.createBufferFromRGB(data, info.width, info.height, info.channels);
+        
+        // Display with accurate color mapping
+        epd.display(imageBuffer);
+        
+        epd.sleep();
+        
+    } catch (error) {
+        console.error('Error:', error.message);
+    } finally {
+        epd.exit();
+    }
+}
+
+displayFullColorImage();
 ```
 
 ## API Reference
@@ -203,6 +246,30 @@ Get a pixel from the image buffer.
 - `x` (number): X coordinate
 - `y` (number): Y coordinate
 
+##### `setPixelRGB(buffer, x, y, r, g, b)` ⭐ NEW
+Set a pixel using RGB values with BMP-compatible color mapping.
+- `buffer` (Buffer): Image buffer
+- `x` (number): X coordinate
+- `y` (number): Y coordinate
+- `r` (number): Red value (0-255)
+- `g` (number): Green value (0-255)
+- `b` (number): Blue value (0-255)
+
+##### `createBufferFromRGB(rgbData, width, height, channels)` ⭐ NEW
+Create a display buffer from RGB image data using BMP-compatible color mapping.
+- `rgbData` (Uint8Array): RGB image data
+- `width` (number): Image width
+- `height` (number): Image height
+- `channels` (number): Color channels (3 for RGB, 4 for RGBA)
+
+##### `createFullColorTestPattern(pattern)` ⭐ NEW
+Create test patterns demonstrating full color capability.
+- `pattern` (string): Pattern type ('gradient', 'rainbow', 'natural')
+
+##### `analyzeColorDistribution(buffer)` ⭐ NEW
+Analyze color usage in a buffer.
+- `buffer` (Buffer): Image buffer to analyze
+
 ### Color Constants
 
 ```javascript
@@ -212,7 +279,49 @@ epd.colors.YELLOW  // 0x2
 epd.colors.RED     // 0x3
 epd.colors.BLUE    // 0x5
 epd.colors.GREEN   // 0x6
+
+// NEW: BMP-compatible RGB color mapping
+epd.setPixelRGB(buffer, x, y, r, g, b);  // Maps to closest display color
 ```
+
+## 🎨 BMP-Compatible Color Mapping
+
+This addon now uses **BMP-compatible color mapping** (same logic as GUI.c) to map RGB colors to the closest available display colors:
+
+### Before (Forced RGB Only)
+- Orange (255, 165, 0) → Red (dominant channel)
+- Purple (128, 0, 128) → Blue (dominant channel)
+- Cyan (0, 255, 255) → Green (dominant channel)
+- All colors forced to Red, Green, or Blue only
+
+### After (BMP-Compatible Mapping)
+- Orange → Yellow (closest available color)
+- Purple → Blue (closest available color)
+- Cyan → Yellow (closest available color)
+- Colors mapped to closest display color using color distance calculation
+
+### Quick Start with BMP-Compatible Colors
+
+```javascript
+const epd = new EPD7in3e();
+epd.init();
+
+// Create a buffer with realistic color mapping
+const buffer = epd.createFullColorTestPattern('natural');
+epd.display(buffer);
+
+// Or set individual pixels with RGB colors (mapped to closest display color)
+epd.setPixelRGB(buffer, 0, 0, 255, 165, 0);  // Orange → Yellow
+epd.setPixelRGB(buffer, 1, 0, 128, 0, 128);  // Purple → Blue
+epd.setPixelRGB(buffer, 2, 0, 0, 255, 255);  // Cyan → Yellow
+
+// Available color mapping methods
+const buffer1 = epd.createBufferFromRGB(rgbData, width, height, 3);  // Closest color (default)
+const buffer2 = epd.createBufferFromRGBAdvanced(rgbData, width, height, 3, 'threshold');  // Threshold-based
+const buffer3 = epd.createBufferFromRGBAdvanced(rgbData, width, height, 3, 'exact');  // Exact match only
+```
+
+For detailed information, see [FULL_COLOR_GUIDE.md](FULL_COLOR_GUIDE.md).
 
 ## Display Specifications
 
@@ -252,6 +361,9 @@ The addon uses the following default GPIO pins (BCM numbering):
 Check the `examples/` directory for more detailed examples:
 - `basic.js`: Basic usage example
 - `custom-image.js`: Advanced example with custom image buffers
+- `display-image-full-color.js`: ⭐ NEW - Full color image processing
+- `color-comparison.js`: ⭐ NEW - Compare old vs new color handling
+- `bmp-color-mapping.js`: ⭐ NEW - BMP-compatible color mapping demonstration
 
 ## Compilation Options
 
