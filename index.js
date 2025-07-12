@@ -192,8 +192,8 @@ class EPD7in3e {
      * @returns {number} Display color value
      */
     mapRGBToDisplayColor(r, g, b) {
-        // Based on GUI_ReadBmp_RGB_7Color and GUI_ReadBmp_RGB_6Color logic
-        // but with improved color distance calculation for better color matching
+        // Improved color mapping using perceptual color distance
+        // Based on human vision sensitivity (more sensitive to green, less to blue)
         
         // Define the available display colors with their RGB values
         const displayColors = [
@@ -212,16 +212,22 @@ class EPD7in3e {
             }
         }
 
-        // If no exact match, find the closest color by calculating color distance
+        // Use weighted Euclidean distance for better perceptual matching
+        // Human eyes are more sensitive to green, less to blue
         let minDistance = Infinity;
         let closestColor = this.colors.BLACK;
 
         for (const dispColor of displayColors) {
-            // Calculate Euclidean distance in RGB space
+            const dr = r - dispColor.r;
+            const dg = g - dispColor.g;
+            const db = b - dispColor.b;
+            
+            // Weighted distance formula based on human vision sensitivity
+            // Red weight: 2.0, Green weight: 4.0, Blue weight: 1.0
             const distance = Math.sqrt(
-                Math.pow(r - dispColor.r, 2) + 
-                Math.pow(g - dispColor.g, 2) + 
-                Math.pow(b - dispColor.b, 2)
+                2.0 * dr * dr +
+                4.0 * dg * dg +
+                1.0 * db * db
             );
             
             if (distance < minDistance) {

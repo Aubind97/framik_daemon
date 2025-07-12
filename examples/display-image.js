@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Example showing how to load and display an image file on the e-Paper display
-// This example uses a simple approach to convert image data to the display format
+// This version uses proper color mapping based on the InkyPi approach
 
 async function displayImageExample() {
     const epd = new EPD7in3e();
@@ -23,18 +23,18 @@ async function displayImageExample() {
             throw new Error(`Image file not found: ${imagePath}`);
         }
 
-        // Load and process the real image preserving actual colors
-        console.log('Converting image to e-Paper format (preserving real colors)...');
+        // Load and process the real image with proper color mapping
+        console.log('Converting image to e-Paper format with proper color mapping...');
         let imageBuffer;
 
         try {
             // Try to use Sharp for real image processing
-            imageBuffer = await convertImageToEPDFormatWithSharp(epd, imagePath);
+            imageBuffer = await convertImageWithProperColorMapping(epd, imagePath);
         } catch (error) {
             if (error.message.includes('Cannot find module \'sharp\'')) {
-                console.warn('Sharp library not found. Using fallback placeholder pattern.');
+                console.warn('Sharp library not found. Using fallback pattern.');
                 console.warn('To process real images, install Sharp: npm install sharp');
-                imageBuffer = await convertImageToEPDFormat(epd, imagePath);
+                imageBuffer = createColorTestPattern(epd);
             } else {
                 throw error;
             }
@@ -45,7 +45,8 @@ async function displayImageExample() {
         epd.display(imageBuffer);
 
         // Wait to show the image
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        console.log('Image displayed. Waiting 10 seconds...');
+        await new Promise(resolve => setTimeout(resolve, 10000));
 
         // Clear the display
         console.log('Clearing display...');
@@ -65,67 +66,182 @@ async function displayImageExample() {
 }
 
 /**
- * Convert image to e-Paper display format
- * This is a simplified example. For production use, consider using 'sharp' or similar library
- * to properly process JPEG images and convert them to the 7-color palette
+ * Convert image using Sharp with proper color mapping
+ * This preserves the actual image colors by using optimal color distance calculation
  */
-// async function convertImageToEPDFormat(epd, imagePath) {
-//     // Create a buffer for the display
-//     const buffer = epd.createBuffer(epd.colors.WHITE);
+async function convertImageWithProperColorMapping(epd, imagePath) {
+    const sharp = require('sharp');
+    
+    // Resize image to fit display while maintaining aspect ratio
+    const displayWidth = epd.getWidth();
+    const displayHeight = epd.getHeight();
+    
+    const { data, info } = await sharp(imagePath)
+        .resize(displayWidth, displayHeight, {
+            fit: 'inside',
+            withoutEnlargement: true,
+            background: { r: 255, g: 255, b: 255 }
+        })
+        .raw()
+        .toBuffer({ resolveWithObject: true });
 
-//     // Since we don't have image processing libraries in this basic example,
-//     // we'll create a placeholder pattern that represents where the image would be
+    console.log(`Processed image: ${info.width}x${info.height} channels: ${info.channels}`);
 
-//     console.log('Creating image placeholder pattern...');
+    // Create buffer for the display (each byte contains 2 pixels, 4 bits each)
+    const buffer = epd.createBuffer(epd.colors.WHITE);
 
-//     // Create a border to represent the image area
-//     const borderWidth = 10;
-//     const imageAreaWidth = Math.min(400, epd.getWidth() - 40);
-//     const imageAreaHeight = Math.min(300, epd.getHeight() - 40);
-//     const startX = Math.floor((epd.getWidth() - imageAreaWidth) / 2);
-//     const startY = Math.floor((epd.getHeight() - imageAreaHeight) / 2);
+    // Process RGB data with proper color mapping
+    const { width, height, channels } = info;
+    let colorStats = new Map();
 
-//     // Draw border
-//     for (let y = startY; y < startY + imageAreaHeight; y++) {
-//         for (let x = startX; x < startX + imageAreaWidth; x++) {
-//             const distanceFromEdge = Math.min(
-//                 x - startX,
-//                 y - startY,
-//                 startX + imageAreaWidth - 1 - x,
-//                 startY + imageAreaHeight - 1 - y
-//             );
+    // Calculate offset to center the image if it's smaller than display
+    const offsetX = Math.floor((displayWidth - width) / 2);
+    const offsetY = Math.floor((displayHeight - height) / 2);
 
-//             if (distanceFromEdge < borderWidth) {
-//                 epd.setPixel(buffer, x, y, epd.colors.BLACK);
-//             } else {
-//                 // Create a simple pattern inside the border
-//                 const centerX = startX + Math.floor(imageAreaWidth / 2);
-//                 const centerY = startY + Math.floor(imageAreaHeight / 2);
-//                 const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const pixelIndex = (y * width + x) * channels;
+            const r = data[pixelIndex];
+            const g = data[pixelIndex + 1];
+            const b = data[pixelIndex + 2];
 
-//                 if (distance < 50) {
-//                     epd.setPixel(buffer, x, y, epd.colors.RED);
-//                 } else if (distance < 100) {
-//                     epd.setPixel(buffer, x, y, epd.colors.BLUE);
-//                 } else if (distance < 150) {
-//                     epd.setPixel(buffer, x, y, epd.colors.GREEN);
-//                 } else {
-//                     epd.setPixel(buffer, x, y, epd.colors.YELLOW);
-//                 }
-//             }
-//         }
-//     }
+            // Use improved color mapping that considers perceptual color distance
+            const displayColor = mapRGBToDisplayColorImproved(epd, r, g, b);
+            
+            // Set pixel at correct position (centered)
+            const displayX = x + offsetX;
+            const displayY = y + offsetY;
+            
+            if (displayX >= 0 && displayX < displayWidth && 
+                displayY >= 0 && displayY < displayHeight) {
+                epd.setPixel(buffer, displayX, displayY, displayColor);
+            }
 
-//     // Add text placeholder
-//     console.log('Adding "IMG.JPG" text placeholder...');
-//     drawSimpleText(epd, buffer, 'IMG.JPG', startX + 20, startY + 20, epd.colors.BLACK);
+            // Track color usage for statistics
+            const colorName = getColorName(epd, displayColor);
+            colorStats.set(colorName, (colorStats.get(colorName) || 0) + 1);
+        }
+    }
 
-//     return buffer;
-// }
+    // Log color distribution
+    console.log('\n=== COLOR MAPPING STATISTICS ===');
+    for (const [color, count] of colorStats.entries()) {
+        const percentage = ((count / (width * height)) * 100).toFixed(1);
+        console.log(`${color}: ${count} pixels (${percentage}%)`);
+    }
+
+    return buffer;
+}
 
 /**
- * Draw simple text on the buffer (very basic implementation)
- * For production use, consider using a proper font rendering library
+ * Improved RGB to display color mapping using perceptual color distance
+ * Based on human vision sensitivity (more weight to green, less to blue)
+ */
+function mapRGBToDisplayColorImproved(epd, r, g, b) {
+    // Define the available display colors with their RGB values
+    const displayColors = [
+        { color: epd.colors.BLACK, r: 0, g: 0, b: 0, name: 'BLACK' },
+        { color: epd.colors.WHITE, r: 255, g: 255, b: 255, name: 'WHITE' },
+        { color: epd.colors.YELLOW, r: 255, g: 255, b: 0, name: 'YELLOW' },
+        { color: epd.colors.RED, r: 255, g: 0, b: 0, name: 'RED' },
+        { color: epd.colors.BLUE, r: 0, g: 0, b: 255, name: 'BLUE' },
+        { color: epd.colors.GREEN, r: 0, g: 255, b: 0, name: 'GREEN' }
+    ];
+
+    // First check for exact matches
+    for (const dispColor of displayColors) {
+        if (r === dispColor.r && g === dispColor.g && b === dispColor.b) {
+            return dispColor.color;
+        }
+    }
+
+    // Use weighted Euclidean distance that considers human vision sensitivity
+    // Human eyes are more sensitive to green, less to blue
+    let minDistance = Infinity;
+    let closestColor = epd.colors.BLACK;
+
+    for (const dispColor of displayColors) {
+        // Weighted distance formula for better perceptual matching
+        const dr = r - dispColor.r;
+        const dg = g - dispColor.g;
+        const db = b - dispColor.b;
+        
+        // Weights based on human vision sensitivity
+        const distance = Math.sqrt(
+            2.0 * dr * dr +
+            4.0 * dg * dg +
+            1.0 * db * db
+        );
+        
+        if (distance < minDistance) {
+            minDistance = distance;
+            closestColor = dispColor.color;
+        }
+    }
+
+    return closestColor;
+}
+
+/**
+ * Get color name from color value
+ */
+function getColorName(epd, colorValue) {
+    const colorMap = {
+        [epd.colors.BLACK]: 'BLACK',
+        [epd.colors.WHITE]: 'WHITE',
+        [epd.colors.YELLOW]: 'YELLOW',
+        [epd.colors.RED]: 'RED',
+        [epd.colors.BLUE]: 'BLUE',
+        [epd.colors.GREEN]: 'GREEN'
+    };
+    return colorMap[colorValue] || 'UNKNOWN';
+}
+
+/**
+ * Create a color test pattern when Sharp is not available
+ */
+function createColorTestPattern(epd) {
+    console.log('Creating color test pattern...');
+    
+    const buffer = epd.createBuffer(epd.colors.WHITE);
+    const width = epd.getWidth();
+    const height = epd.getHeight();
+    
+    // Create horizontal color bands
+    const bandHeight = Math.floor(height / 6);
+    const colors = [
+        epd.colors.BLACK,
+        epd.colors.RED,
+        epd.colors.GREEN,
+        epd.colors.BLUE,
+        epd.colors.YELLOW,
+        epd.colors.WHITE
+    ];
+    
+    for (let y = 0; y < height; y++) {
+        const bandIndex = Math.min(Math.floor(y / bandHeight), colors.length - 1);
+        const color = colors[bandIndex];
+        
+        for (let x = 0; x < width; x++) {
+            // Add some pattern variation
+            if (x % 50 < 5 || y % 50 < 5) {
+                // Grid lines in black
+                epd.setPixel(buffer, x, y, epd.colors.BLACK);
+            } else {
+                epd.setPixel(buffer, x, y, color);
+            }
+        }
+    }
+    
+    // Add text area
+    drawSimpleText(epd, buffer, 'NO SHARP LIBRARY', 50, 50, epd.colors.BLACK);
+    drawSimpleText(epd, buffer, 'INSTALL: npm install sharp', 50, 100, epd.colors.BLACK);
+    
+    return buffer;
+}
+
+/**
+ * Draw simple text on the buffer
  */
 function drawSimpleText(epd, buffer, text, startX, startY, color) {
     const letterWidth = 8;
@@ -156,219 +272,31 @@ function drawSimpleText(epd, buffer, text, startX, startY, color) {
     }
 }
 
-/**
- * Enhanced version using Sharp library (requires npm install sharp)
- * This version preserves the real colors of each pixel instead of converting to limited e-Paper colors
- */
-
-async function convertImageToEPDFormatWithSharp(epd, imagePath) {
-    try {
-        const sharp = require('sharp');
-    } catch (error) {
-        throw new Error('Cannot find module \'sharp\'. Please install it with: npm install sharp');
-    }
-
-    const sharp = require('sharp');
-
-    // Load the image (assuming it's already the correct size)
-    const { data, info } = await sharp(imagePath)
-        .raw()
-        .toBuffer({ resolveWithObject: true });
-
-    // Create buffer for the display
-    const buffer = epd.createBuffer(epd.colors.WHITE);
-
-    // Process RGB data preserving real colors
-    const { width, height, channels } = info;
-
-    // Ensure the image dimensions match the display
-    if (width !== epd.getWidth() || height !== epd.getHeight()) {
-        console.warn(`Image size (${width}x${height}) doesn't match display size (${epd.getWidth()}x${epd.getHeight()})`);
-        console.warn('Consider resizing the image to match the display dimensions for optimal results.');
-    }
-
-    const processWidth = Math.min(width, epd.getWidth());
-    const processHeight = Math.min(height, epd.getHeight());
-
-    for (let y = 0; y < processHeight; y++) {
-        for (let x = 0; x < processWidth; x++) {
-            const pixelIndex = (y * width + x) * channels;
-            const r = data[pixelIndex];
-            const g = data[pixelIndex + 1];
-            const b = data[pixelIndex + 2];
-
-            // Create a custom color value preserving the real RGB values
-            // Since we want to show real colors, we'll encode RGB into a format
-            // that can be handled by the display buffer
-            const realColor = preserveRealColor(r, g, b);
-            epd.setPixel(buffer, x, y, realColor);
-        }
-    }
-
-    return buffer;
-}
-
-function preserveRealColor(r, g, b) {
-    // Instead of converting to limited e-Paper colors, we preserve the RGB values
-    // This assumes the display can handle or will be processed differently
-    // For now, we'll create a composite value that preserves color information
-
-    // Option 1: Use a simple encoding that preserves the RGB ratios
-    // We'll use the dominant color channel to determine the base color
-    // but preserve the intensity information
-
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const diff = max - min;
-
-    if (diff < 30) {
-        // Grayscale - preserve brightness
-        const brightness = (r + g + b) / 3;
-        return Math.floor(brightness / 36); // Map to 0-7 range preserving brightness
-    }
-
-    // Color image - preserve the dominant hue with intensity
-    if (r === max) {
-        // Red dominant
-        return Math.floor(r / 32) | 0x10; // Red with intensity
-    } else if (g === max) {
-        // Green dominant
-        return Math.floor(g / 32) | 0x20; // Green with intensity
-    } else {
-        // Blue dominant
-        return Math.floor(b / 32) | 0x30; // Blue with intensity
-    }
-}
-
-
 // Usage instructions
 console.log('='.repeat(60));
-console.log('E-Paper Display Image Example');
+console.log('E-Paper Display Image Example (Fixed Version)');
 console.log('='.repeat(60));
 console.log('');
-console.log('This example shows how to display an image on the e-Paper display.');
+console.log('This example demonstrates proper color mapping for e-Paper displays.');
 console.log('');
-console.log('BASIC VERSION (current):');
-console.log('- Creates a placeholder pattern representing the image');
-console.log('- Does not require additional dependencies');
+console.log('FEATURES:');
+console.log('- Perceptual color distance calculation');
+console.log('- Proper image resizing and centering');
+console.log('- Color distribution statistics');
+console.log('- Fallback pattern when Sharp is not available');
 console.log('');
-console.log('ENHANCED VERSION (now active):');
-console.log('- Requires Sharp library: npm install sharp');
-console.log('- Properly processes JPEG images');
-console.log('- Preserves real colors instead of converting to limited palette');
+console.log('REQUIREMENTS:');
+console.log('- Sharp library for image processing: npm install sharp');
+console.log('- Image file at ../images/img.jpg');
 console.log('');
-console.log('To use this enhanced version:');
-console.log('1. Install Sharp: npm install sharp');
-console.log('2. Ensure your image is already sized correctly for the display');
-console.log('3. The example will preserve the real colors of each pixel');
+console.log('IMPROVEMENTS:');
+console.log('- Uses weighted color distance for better visual results');
+console.log('- Preserves image aspect ratio');
+console.log('- Centers images on display');
+console.log('- Shows color mapping statistics');
 console.log('');
 console.log('='.repeat(60));
 console.log('');
-
-/**
- * Utility function to analyze and log color information from the image
- */
-function analyzeImageColors(epd, buffer) {
-    const colorStats = new Map();
-    const samplePixels = [];
-
-    // Sample pixels from different areas of the image
-    const samplePoints = [
-        { x: 0, y: 0, label: 'Top-left' },
-        { x: Math.floor(epd.getWidth() / 2), y: Math.floor(epd.getHeight() / 2), label: 'Center' },
-        { x: epd.getWidth() - 1, y: epd.getHeight() - 1, label: 'Bottom-right' },
-        { x: Math.floor(epd.getWidth() / 4), y: Math.floor(epd.getHeight() / 4), label: 'Quarter' },
-        { x: Math.floor(3 * epd.getWidth() / 4), y: Math.floor(3 * epd.getHeight() / 4), label: 'Three-quarter' }
-    ];
-
-    samplePoints.forEach(point => {
-        if (point.x < epd.getWidth() && point.y < epd.getHeight()) {
-            const pixelValue = epd.getPixel(buffer, point.x, point.y);
-            samplePixels.push({
-                ...point,
-                value: pixelValue,
-                hex: `0x${pixelValue.toString(16).padStart(2, '0')}`
-            });
-        }
-    });
-
-    console.log('\n=== COLOR ANALYSIS ===');
-    console.log('Sample pixels with preserved color information:');
-    samplePixels.forEach(pixel => {
-        console.log(`  ${pixel.label} (${pixel.x}, ${pixel.y}): ${pixel.hex} (${pixel.value})`);
-    });
-
-    return samplePixels;
-}
-
-/**
- * Enhanced display function with color analysis
- */
-async function displayImageWithAnalysis() {
-    const epd = new EPD7in3e();
-
-    try {
-        console.log('Initializing e-Paper display...');
-        epd.init();
-
-        console.log(`Display dimensions: ${epd.getWidth()}x${epd.getHeight()}`);
-        console.log('Available colors:', Object.keys(epd.colors));
-
-        // Load the image file
-        const imagePath = path.join(__dirname, '../images/img.jpg');
-        console.log(`Loading image from: ${imagePath}`);
-
-        if (!fs.existsSync(imagePath)) {
-            throw new Error(`Image file not found: ${imagePath}`);
-        }
-
-        // Load and process the real image preserving actual colors
-        console.log('Converting image to e-Paper format (preserving real colors)...');
-        let imageBuffer;
-
-        try {
-            // Try to use Sharp for real image processing
-            imageBuffer = await convertImageToEPDFormatWithSharp(epd, imagePath);
-
-            // Analyze the preserved colors
-            analyzeImageColors(epd, imageBuffer);
-
-        } catch (error) {
-            if (error.message.includes('Cannot find module \'sharp\'')) {
-                console.warn('Sharp library not found. Using fallback placeholder pattern.');
-                console.warn('To process real images, install Sharp: npm install sharp');
-                imageBuffer = await convertImageToEPDFormat(epd, imagePath);
-            } else {
-                throw error;
-            }
-        }
-
-        // Display the image
-        console.log('Displaying image on e-Paper display...');
-        epd.display(imageBuffer);
-
-        // Wait to show the image
-        await new Promise(resolve => setTimeout(resolve, 5000));
-
-        // Clear the display
-        console.log('Clearing display...');
-        epd.clear(epd.colors.WHITE);
-
-        // Put display to sleep
-        console.log('Putting display to sleep...');
-        epd.sleep();
-
-    } catch (error) {
-        console.error('Error:', error.message);
-    } finally {
-        // Always cleanup
-        epd.exit();
-        console.log('Cleanup complete');
-    }
-}
 
 // Run the example
 displayImageExample().catch(console.error);
-
-// Alternative: Run with detailed color analysis
-// displayImageWithAnalysis().catch(console.error);
