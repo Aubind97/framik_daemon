@@ -16,7 +16,7 @@ async function displayImageExample() {
         console.log('Available colors:', Object.keys(epd.colors));
 
         // Load the image file
-        const imagePath = path.join(__dirname, '../images/img.jpg');
+        const imagePath = path.join(__dirname, '../images/7in3e.jpg');
         console.log(`Loading image from: ${imagePath}`);
 
         if (!fs.existsSync(imagePath)) {
@@ -71,11 +71,11 @@ async function displayImageExample() {
  */
 async function convertImageWithProperColorMapping(epd, imagePath) {
     const sharp = require('sharp');
-    
+
     // Resize image to fit display while maintaining aspect ratio
     const displayWidth = epd.getWidth();
     const displayHeight = epd.getHeight();
-    
+
     const { data, info } = await sharp(imagePath)
         .resize(displayWidth, displayHeight, {
             fit: 'inside',
@@ -107,12 +107,12 @@ async function convertImageWithProperColorMapping(epd, imagePath) {
 
             // Use improved color mapping that considers perceptual color distance
             const displayColor = mapRGBToDisplayColorImproved(epd, r, g, b);
-            
+
             // Set pixel at correct position (centered)
             const displayX = x + offsetX;
             const displayY = y + offsetY;
-            
-            if (displayX >= 0 && displayX < displayWidth && 
+
+            if (displayX >= 0 && displayX < displayWidth &&
                 displayY >= 0 && displayY < displayHeight) {
                 epd.setPixel(buffer, displayX, displayY, displayColor);
             }
@@ -165,14 +165,14 @@ function mapRGBToDisplayColorImproved(epd, r, g, b) {
         const dr = r - dispColor.r;
         const dg = g - dispColor.g;
         const db = b - dispColor.b;
-        
+
         // Weights based on human vision sensitivity
         const distance = Math.sqrt(
             2.0 * dr * dr +
             4.0 * dg * dg +
             1.0 * db * db
         );
-        
+
         if (distance < minDistance) {
             minDistance = distance;
             closestColor = dispColor.color;
@@ -202,11 +202,11 @@ function getColorName(epd, colorValue) {
  */
 function createColorTestPattern(epd) {
     console.log('Creating color test pattern...');
-    
+
     const buffer = epd.createBuffer(epd.colors.WHITE);
     const width = epd.getWidth();
     const height = epd.getHeight();
-    
+
     // Create horizontal color bands
     const bandHeight = Math.floor(height / 6);
     const colors = [
@@ -217,11 +217,11 @@ function createColorTestPattern(epd) {
         epd.colors.YELLOW,
         epd.colors.WHITE
     ];
-    
+
     for (let y = 0; y < height; y++) {
         const bandIndex = Math.min(Math.floor(y / bandHeight), colors.length - 1);
         const color = colors[bandIndex];
-        
+
         for (let x = 0; x < width; x++) {
             // Add some pattern variation
             if (x % 50 < 5 || y % 50 < 5) {
@@ -232,11 +232,11 @@ function createColorTestPattern(epd) {
             }
         }
     }
-    
+
     // Add text area
     drawSimpleText(epd, buffer, 'NO SHARP LIBRARY', 50, 50, epd.colors.BLACK);
     drawSimpleText(epd, buffer, 'INSTALL: npm install sharp', 50, 100, epd.colors.BLACK);
-    
+
     return buffer;
 }
 
